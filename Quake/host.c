@@ -45,9 +45,9 @@ quakeparms_t *host_parms;
 
 qboolean host_initialized; // true if into command execution
 
-double host_frametime;
-double realtime;	// without any filtering or bounding
-double oldrealtime; // last frame run
+double host_frametime = 0.0;
+double realtime = 0.0;	  // without any filtering or bounding
+double oldrealtime = 0.0; // last frame run
 
 int host_framecount;
 
@@ -64,8 +64,11 @@ cvar_t host_framerate = {"host_framerate", "0", CVAR_NONE}; // set for slow moti
 cvar_t host_speeds = {"host_speeds", "0", CVAR_NONE};		// set for running times
 cvar_t host_maxfps = {"host_maxfps", "200", CVAR_ARCHIVE};	// johnfitz
 cvar_t host_timescale = {"host_timescale", "0", CVAR_NONE}; // johnfitz
-cvar_t max_edicts = {"max_edicts", "8192", CVAR_NONE};		// johnfitz //ericw -- changed from 2048 to 8192, removed CVAR_ARCHIVE
-cvar_t cl_nocsqc = {"cl_nocsqc", "0", CVAR_NONE};			// spike -- blocks the loading of any csqc modules
+
+cvar_t host_simu_time_quantums_per_sec = {"host_simu_time_quantums_per_sec", "0", CVAR_ARCHIVE};
+
+cvar_t max_edicts = {"max_edicts", "8192", CVAR_NONE}; // johnfitz //ericw -- changed from 2048 to 8192, removed CVAR_ARCHIVE
+cvar_t cl_nocsqc = {"cl_nocsqc", "0", CVAR_NONE};	   // spike -- blocks the loading of any csqc modules
 
 cvar_t sys_ticrate = {"sys_ticrate", "0.025", CVAR_NONE}; // dedicated server
 cvar_t serverprofile = {"serverprofile", "0", CVAR_NONE};
@@ -295,6 +298,8 @@ void Host_InitLocal (void)
 	Cvar_RegisterVariable (&host_maxfps); // johnfitz
 	Cvar_SetCallback (&host_maxfps, Max_Fps_f);
 	Cvar_RegisterVariable (&host_timescale); // johnfitz
+
+	Cvar_RegisterVariable (&host_simu_time_quantums_per_sec); // vso
 
 	Cvar_RegisterVariable (&cl_nocsqc);	 // spike
 	Cvar_RegisterVariable (&max_edicts); // johnfitz
@@ -652,11 +657,15 @@ qboolean Host_FilterTime (float time)
 		// E.g. Windows is not a real time OS and the sleeps can vary in length even with timeBeginPeriod(1)
 		min_frame_time = 1.0f / maxfps;
 		if ((min_frame_time - delta_since_last_frame) > (2.0f / 1000.0f))
+		{
 			SDL_Delay (1);
+		}
 
 		if (!cls.timedemo && (delta_since_last_frame < min_frame_time))
+		{
 			return false; // framerate is too high
 						  // johnfitz
+		}
 	}
 
 	host_frametime = delta_since_last_frame;
@@ -816,6 +825,20 @@ static void CL_LoadCSProgs (void)
 	}
 }
 
+// Simulation double time : only increments time by constant amounts
+// <= 0 = identical to Sys_DoubleTime.
+static double SimuDoubleTime (double time)
+{
+	int quantums_per_sec = (int)host_simu_time_quantums_per_sec.value;
+
+	if (quantums_per_sec <= 0)
+		return time;
+
+	double time_in_quantums = round (time * quantums_per_sec);
+
+	return time_in_quantums / quantums_per_sec;
+}
+
 /*
 ==================
 Host_Frame
@@ -837,8 +860,12 @@ void _Host_Frame (double time)
 	// keep the random time dependent
 	rand ();
 
+	// unused
+	(void)SimuDoubleTime;
+
 	// decide the simulation time
 	accumtime += host_netinterval ? CLAMP (0, time, 0.2) : 0; // for renderer/server isolation
+
 	if (!Host_FilterTime (time))
 		return; // don't run too fast, or packets will flood out
 
